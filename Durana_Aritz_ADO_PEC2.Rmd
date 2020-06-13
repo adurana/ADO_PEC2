@@ -1,0 +1,993 @@
+---
+title: "Durana_Aritz_ADO_PEC2"
+author: "Aritz Durana"
+date: "9/6/2020"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+  prettydoc::html_pretty:
+    highlight: github
+    number_sections: yes
+    theme: cayman
+    toc: yes
+    toc_depth: 2
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+    number_sections: true
+bibliography: references.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, 
+                      comment = NA, prompt = TRUE, tidy = FALSE, 
+                      fig.width = 7, fig.height = 7, fig_caption = TRUE,
+                      cache=FALSE)
+```
+
+\newpage
+
+#ABSTRACT
+
+Este informe trata sobre el análisis de datos de expresión RNA-seq de tres tipos de tejidos diferentes en un estudio de tiroides. Los datos se encuentran en el repositorio GTEx,^[https://www.gtexportal.org/home/] que contiene datos de expresión génica en diferentes tejidos.
+
+Todos los ficheros con los datos y el código utilizados para generar este informe se pueden encontrar en un repositorio de github.^[https://github.com/adurana/ADO_PEC2]
+
+#OBJETIVOS
+
+El principal objetivo de este trabajo es estudiar el efecto de los diferentes tipos de tejidos en los datos de expresión génica. Para ello se partirá de unos datos de contaje previamente preprocesados.
+
+Por otra parte, el objetivo de esta PEC2 es la realización de un análisis de datos de RNA-seq de una manera lo más fiel posible a la realidad. De este modo, es posible aplicar los conocimientos teóricos adquiridos a un caso práctico.
+
+#MATERIALES Y MÉTODOS
+
+##Software
+
+Para la realización de este informe se ha utilizado [R](https://cran.r-project.org/index.html) (versión 4.0.1) y el interfaz [RStudio](https://www.rstudio.com/). Los paquetes específicos para el análisis de datos de RNA-seq se han obtenido del proyecto [Bioconductor](https://www.bioconductor.org/) (versión 3.11) que engloba los paquetes para análisis de datos ómicos más habituales.
+
+##Datos
+
+Los datos de partida para este estudio son los facilitados con el enunciado del ejercicio. Se trata de un archivo con los datos de conteos ya procesados `counts.csv` y de un archivo con los grupos y las covariables `targets.csv`.
+
+##Workflow y métodos
+
+El procedimiento general del análisis se puede resumir en los siguientes pasos. En cada paso se resume el tipo de tarea realizado y los métodos utilizados.
+
+1. Preparación del entorno: Creación de directorios de trabajo.
+2. Lectura de datos: Lectura de los ficheros `counts.csv` y `targets.csv` y modificación de datos Ensembl.
+3. Modificación de los objetos `counts` y `targets`: Modificación para evitar problemas durante el análisis
+4. Selección aleatoria de muestras: Selección de muestras para cada tipo de tejido. 
+5. Modificación del objeto `counts` según el muestreo: Selección de las columnas del objeto `counts` basada en la selección aleatoria de muestras.
+6. Construcción de los objetos `DESeqDataSet` usando de datos sin normalizar: Creación de los objetos con `DESeq2` para desarrollar el análisis.
+7. Filtraje de los datos: Filtraje para retirar las filas sin conteos.
+8. Estabilización de la varianza: Transformación de los datos para estabilizar la varianza (vst y rlog).
+9. Distancia entre las muestras: Gráfico para visualizar la distancia entre muestras.
+10. Análisis de componentes principales (PCA): Visualización de PCA.
+11. Análisis de expresión diferencial: Uso de la función `DESeq()`.
+12. Contracción del cambio de log fold: Contracción de los resultados para posterior visualización.
+13. Counts plot: Gráfico de contajes para visualizar los contajes de cada gen.
+14. MA plot: Gráfico MA para observar la variabilidad en el contaje de cada gen sobre la media.
+15. Gene clustering: Heatmap con el agrupamiento de los genes con más variabilidad.
+16. Anotación: Se añaden los nombres de los genes a los resultados.
+17. Resumen de resultados: Listado de los ficheros de resultados generados.
+
+
+
+
+\pagebreak
+
+
+#RESULTADOS Y DISCUSIÓN
+
+En esta sección se detallarán los resultados obtenidos en el análisis siguiendo el workflow descrito anteriormente. El código utilizado para realizar el análisis no se mostrará y solo se mostrarán los resultados más relevantes. Todo el código empleado para la realización del análisis se podrá encontrar en el apéndice que se encuentra al final de este informe además de en el repositorio de github mencionado anteriormente.^2^ Hay que señalar que gran parte del análisis esta basado en diferentes análisis disponibles online y en los materiales de la asignatura. ^[https://github.com/ASPteaching/Omics_data_analysis-Case_study_2-RNA-seq]$^,$  ^[http://master.bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html#aligning-reads-to-a-reference-genome]$^,$ ^[http://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#pre-filtering]
+
+##Preparación del entorno
+
+Antes de descargar los datos y comenzar con el análisis es recomendable preparar el entorno de trabajo. Tras elegir el directorio de trabajo `workingDir`, se crearon los directorios para los datos `dataDir` y los resultados `resultsDir`.
+
+```{r preparacion del entorno, eval=FALSE}
+setwd("~/Desktop/Master UOC/Semestre 3/Asignaturas/157-Analisis de datos omicos/PEC2/ADO_PEC2")
+workingDir <- getwd()
+dir.create("data")
+dir.create("results")
+dataDir <- file.path(workingDir, "data/")
+resultsDir <- file.path(workingDir, "results/")
+```
+
+##Lectura de datos
+
+Los datos preprocesados se proporcionan en los materiales de la asignatura, en concreto los archivos `counts.csv` y `targets.csv`. Se leen y se guardan como objetos *R* utilizando la función `read.csv()`.
+
+
+```{r lectura de datos, results='hide'}
+counts <- read.csv("./data/counts.csv", sep = ";", header = T)
+targets <- read.csv("./data/targets.csv", header = T)
+
+```
+
+```{r visualizacion de los objetos, echo=TRUE}
+head(counts[,1:3],3)
+head(targets, 3)
+```
+
+Se observó que había varios detalles en los datos que era recomendable modificar para evitar problemas durante el análisis.
+
+##Modificación de los objetos `counts` y `targets`
+
+La primera moficicación fue cambiar el nombre de la primera columna y quitar el final de los códigos *Ensemble* (el punto y el código de la versión) en el objeto `counts` para evitar problemas durante el análisis.
+
+```{r modificación de objeto counts}
+names(counts)[1] <- "Ensembl"
+counts$Ensembl <- gsub("\\..*", "", counts$Ensembl, fixed = FALSE)
+```
+
+```{r objeto counts tras modificar, echo=TRUE}
+head(counts$Ensembl)
+```
+
+También se observó que en la columna `targets$Sample_Name`, los nombres de las muestras del experimento están separadas por guiones en lugar de por puntos como en `counts`. Se decidió cambiar todo a puntos.
+
+```{r header counts, echo=TRUE}
+targets$Sample_Name <- gsub("-", ".", x = as.character(targets$Sample_Name))
+```
+
+```{r targets modificado}
+head(targets, 3)
+```
+
+##Selección aleatoria de muestras
+
+Tras la modificación preliminar de los datos, se realizó un muestreo aleatorio para cada uno de los tres tipos de tejidos definidos en `targets$Group`. Se eligieron 10 muestras aleatorias para cada uno de los tipos de tejido (*not infiltrated tissues* (NIT), *small local infiltrates* (SFI) y *extensive lymphoid infiltrates* (ELI)) tras aplicar la función `set.seed()` para asegurar la reproducibilidad del muestreo aleatorio. Obviamente, si se eligieran aleatoriamente otras 30 muestras diferentes el resultado final del análisis podría variar.
+
+```{r muestreo aleatorio}
+targets_NIT <- targets[targets$Group=="NIT",]
+targets_ELI <- targets[targets$Group=="ELI",]
+targets_SFI <- targets[targets$Group=="SFI",]
+```
+
+```{r muestras aleatorias, echo=TRUE}
+
+set.seed(2020)
+
+targets_ELI_rndm <- targets_ELI[sample(nrow(targets_ELI), 10),]
+targets_SFI_rndm <- targets_SFI[sample(nrow(targets_SFI), 10),]
+targets_NIT_rndm <- targets_NIT[sample(nrow(targets_NIT), 10),]
+
+targets_ELI_rndm
+targets_SFI_rndm
+targets_NIT_rndm
+```
+
+Para realizar las comparaciones posteriores, se combinaron estas muestras aleatorias en tres objetos (`targets_ELI_vs_NIT`, `targets_ELI_vs_SFI` y `targets_NIT_vs_SFI`), uno por cada una de las comparaciones.
+
+```{r creacion targets para comparaciones}
+targets_ELI_vs_NIT <- do.call(what = rbind,
+                        args =list(targets_ELI_rndm, targets_NIT_rndm))
+
+targets_ELI_vs_SFI <- do.call(what = rbind,
+                        args =list(targets_ELI_rndm, targets_SFI_rndm))
+
+targets_NIT_vs_SFI <- do.call(what = rbind,
+                        args =list(targets_NIT_rndm, targets_SFI_rndm))
+```
+
+
+##Modificación del archivo `counts` según el muestreo
+
+Se generó un objeto de tipo `counts` para cada una de las comparaciones. Para ello, primero se creó un objeto con las 20 muestras de cada objeto `targets` para cada comparación y la información de *Ensembl* que luego se definió como los nombres de cada fila. Por último se comprobó que los valores de la columna `Sample_Name` de los objetos `targets` coincidía con las columnas de los objetos `counts`. Los tres objetos generados se llaman `counts_ELI_vs_NIT`, `counts_ELI_vs_SFI` y `counts_NIT_vs_SFI`.
+
+```{r modificacion counts segun muestra, include=FALSE}
+counts_red_ELI_vs_NIT <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in% targets_ELI_vs_NIT$Sample_Name])
+counts_ELI_vs_NIT <- counts_red_ELI_vs_NIT[,-1]
+rownames(counts_ELI_vs_NIT) <- counts_red_ELI_vs_NIT[,1]
+all(rownames(targets_ELI_vs_NIT$Sample_Name) == colnames(counts_ELI_vs_NIT))
+
+counts_red_ELI_vs_SFI <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in% targets_ELI_vs_SFI$Sample_Name])
+counts_ELI_vs_SFI <- counts_red_ELI_vs_SFI[,-1]
+rownames(counts_ELI_vs_SFI) <- counts_red_ELI_vs_SFI[,1]
+all(rownames(targets_ELI_vs_SFI$Sample_Name) == colnames(counts_ELI_vs_SFI))
+
+counts_red_NIT_vs_SFI <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in% targets_NIT_vs_SFI$Sample_Name])
+counts_NIT_vs_SFI <- counts_red_NIT_vs_SFI[,-1]
+rownames(counts_NIT_vs_SFI) <- counts_red_NIT_vs_SFI[,1]
+all(rownames(targets_NIT_vs_SFI$Sample_Name) == colnames(counts_NIT_vs_SFI))
+
+```
+
+A continuación se muestran los encabezados de estos objetos.
+
+```{r counts para cada comparacion,echo=TRUE}
+head(counts_ELI_vs_NIT[,1:3], 3)
+head(counts_ELI_vs_SFI[,1:3], 3)
+head(counts_NIT_vs_SFI[,1:3], 3)
+```
+
+##Construcción de los objetos `DESeqDataSet` usando de datos sin normalizar
+
+El siguiente paso en el análisis es la creación de los objetos `DESeqDataSet` que servirán de partida para llevar a cabo el análisis. Es posible crear estos objetos a partir de matrices de contajes como se describe en diferentes tutoriales.^5^ Es interesante mencionar que en este tutorial los autores recomiendan el uso de datos de conteo sin normalizar dado que las propias funciones del paquete `DESeq2` desarrollado por Love [-@Love] realizan las modificaciones estadísticas necesarias. 
+
+
+```{r DESeq2 libreria}
+library("DESeq2")
+```
+
+Tras cargar la librería `DESeq2`, se crearon los tres objetos (`dds_ELI_vs_NIT`, `dds_ELI_vs_SFI` y `dds_NIT_vs_SFI`) usando la función `DESeqDataSetFromMatrix()`. Es importante mencionar que estos objetos tiene que tener definida una fórmula de diseño en la que se expresen la variables con las que se va a modelar. En nuestro caso, la variable a estudiar es `Group`.
+
+```{r creacion objetos DESeq2}
+dds_ELI_vs_NIT <- DESeqDataSetFromMatrix(countData = counts_ELI_vs_NIT,
+                              colData = targets_ELI_vs_NIT,
+                              design = ~ Group)
+dds_ELI_vs_SFI <- DESeqDataSetFromMatrix(countData = counts_ELI_vs_SFI,
+                              colData = targets_ELI_vs_SFI,
+                              design = ~ Group)
+dds_NIT_vs_SFI <- DESeqDataSetFromMatrix(countData = counts_NIT_vs_SFI,
+                              colData = targets_NIT_vs_SFI,
+                              design = ~ Group)
+```
+
+```{r objetos DESeq2, echo=TRUE}
+dds_ELI_vs_NIT
+dds_ELI_vs_SFI
+dds_NIT_vs_SFI
+```
+
+
+##Filtraje de los datos
+
+A continuación se realizó el filtraje para retirar las filas sin nigún conteo. De esta manera se agilizará el análisis y se obtendrán mejores resultados.
+
+```{r filtraje, echo=TRUE}
+nrow(dds_ELI_vs_NIT)
+keep_ELI_vs_NIT <- rowSums(counts(dds_ELI_vs_NIT)) > 1
+dds_ELI_vs_NIT <- dds_ELI_vs_NIT[keep_ELI_vs_NIT,]
+nrow(dds_ELI_vs_NIT)
+
+nrow(dds_ELI_vs_SFI)
+keep_ELI_vs_SFI <- rowSums(counts(dds_ELI_vs_SFI)) > 1
+dds_ELI_vs_SFI <- dds_ELI_vs_SFI[keep_ELI_vs_SFI,]
+nrow(dds_ELI_vs_SFI)
+
+nrow(dds_NIT_vs_SFI)
+keep_NIT_vs_SFI <- rowSums(counts(dds_NIT_vs_SFI)) > 1
+dds_NIT_vs_SFI <- dds_NIT_vs_SFI[keep_NIT_vs_SFI,]
+nrow(dds_NIT_vs_SFI)
+```
+
+Se observó que se filtraron aproximadamente un 25% de filas sin conteos por cada comparación.
+
+##Estabilización de la varianza
+
+Para la mayoría de los métodos estadísticos exploratorios es recomendable que los datos tengan el mismo rango de varianza para diferentes valores medios. Para conteos de RNA-seq la estimación de la varianza crece con la media de los valores por lo que es necesario realizar una transformación en aras de obtener una visualización correcta de los datos.
+
+`DESeq2` ofrece dos transformaciones para estabilizar la varianza a lo largo de los valores de la media: *vst* para datos con distribución binomial negativa [@Anders] y *rlog* para la transformación del logaritmo regularizado [@Love].
+
+Se hacen las transformaciones para las tres comparaciones con lo que se obtienen los objetos `vsd_ELI_vs_NIT`, `vsd_ELI_vs_SFI` y `vsd_NIT_vs_SFI` para el método *vst* y `rld_ELI_vs_NIT`, `rld_ELI_vs_SFI` y `rld_NIT_vs_SFI` para el método *rlog*. Se utilizarán estos objetos en lugar de los `dds` para la visualización de los datos.
+
+```{r estabilizacion varianza vst}
+vsd_ELI_vs_NIT <- vst(dds_ELI_vs_NIT, blind = F)
+vsd_ELI_vs_SFI <- vst(dds_ELI_vs_SFI, blind = F)
+vsd_NIT_vs_SFI <- vst(dds_NIT_vs_SFI, blind = F)
+
+```
+
+```{r estabilizacion varianza rlog}
+rld_ELI_vs_NIT <- rlog(dds_ELI_vs_NIT, blind = F)
+rld_ELI_vs_SFI <- rlog(dds_ELI_vs_SFI, blind = F)
+rld_NIT_vs_SFI <- rlog(dds_NIT_vs_SFI, blind = F)
+```
+
+##Distancia entre las muestras
+
+Un primer análisis para la visualización de los datos es calcular la distancia euclidea entre las diferentes muestras. De este modo se puede evaluar si estas distancias concuerdan con el diseño experimental. Como en todo el análisis se crean tres nuevos objetos con las distancias entre muestras. Para una contribución similar de todos los genes se utilizan los datos *vst*.
+
+```{r distancia entre muestras}
+sampleDists_ELI_vs_NIT <- dist(t(assay(vsd_ELI_vs_NIT)))
+sampleDists_ELI_vs_SFI <- dist(t(assay(vsd_ELI_vs_SFI)))
+sampleDists_NIT_vs_SFI <- dist(t(assay(vsd_NIT_vs_SFI)))
+```
+
+Con estas distancias se puede generar un heatmap que permite analizar si el diseño del experimento ha sido correcto.
+
+```{r distancia entre muestras librerias}
+library("pheatmap")
+library("RColorBrewer")
+```
+
+
+```{r heatmap distancia ELI_vs_NIT, out.width="60%", fig.align="center", fig.cap="Distancias entre muestras para comparación ELI_vs_NIT"}
+sampleDistMatrix_ELI_vs_NIT <- as.matrix(sampleDists_ELI_vs_NIT)
+rownames(sampleDistMatrix_ELI_vs_NIT) <- vsd_ELI_vs_NIT$Group
+colnames(sampleDistMatrix_ELI_vs_NIT) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_ELI_vs_NIT,
+         clustering_distance_rows = sampleDists_ELI_vs_NIT,
+         clustering_distance_cols = sampleDists_ELI_vs_NIT,
+         col = colors)
+```
+
+```{r heatmap distancia ELI_vs_SFI, out.width="60%", fig.align="center", fig.cap="Distancias entre muestras para comparación ELI_vs_SFI"}
+sampleDistMatrix_ELI_vs_SFI <- as.matrix(sampleDists_ELI_vs_SFI)
+rownames(sampleDistMatrix_ELI_vs_SFI) <- vsd_ELI_vs_SFI$Group
+colnames(sampleDistMatrix_ELI_vs_SFI) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_ELI_vs_SFI,
+         clustering_distance_rows = sampleDists_ELI_vs_SFI,
+         clustering_distance_cols = sampleDists_ELI_vs_SFI,
+         col = colors)
+```
+
+```{r heatmap distancia NIT_vs_SFI, out.width="60%", fig.align="center", fig.cap="Distancias entre muestras para comparación NIT_vs_SFI"}
+sampleDistMatrix_NIT_vs_SFI <- as.matrix(sampleDists_NIT_vs_SFI)
+rownames(sampleDistMatrix_NIT_vs_SFI) <- vsd_NIT_vs_SFI$Group
+colnames(sampleDistMatrix_NIT_vs_SFI) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_NIT_vs_SFI,
+         clustering_distance_rows = sampleDists_NIT_vs_SFI,
+         clustering_distance_cols = sampleDists_NIT_vs_SFI,
+         col = colors)
+```
+
+En niguno de los tres gráficos se observa una correlación clara entre las distancias de las muestras y el tipo de tejido. Esto puede deberse a un diseño experimental poco acertado o, más probablemente, a una alta variabilidad debido al reducido número de muestras del muestreo aleatorio.
+
+##Análisis de componentes principales (PCA)
+
+Una manera muy utilizada de visualizar los datos es mediante el análsis de componentes principales. Este método se basa en representar las muestras con respecto a las dos variables que más aportan a la variablidad de los datos. En el eje x se representa la componente que más aporta a la variabilidad total y en el eje y la segunda variable que más aporta. Se generan tres gráficos, uno por cada comparación usando la función `plotPCA()`.
+
+```{r PCA ELI_vs_NIT, fig.width = 6, fig.height = 6, fig.align="center", fig.cap="Plot PCA para comparación ELI_vs_NIT"}
+plotPCA(vsd_ELI_vs_NIT, intgroup="Group")
+```
+
+En el caso de la comparación `ELI_vs_NIT` se observó que las muestras del grupo *ELI* se encuentras repartidas por todo el gráfico, lo que implica que no dependen de los dos componentes principales. En cuanto a las muestras del grupo *NIT* si que se encuentran agrupadas en valores absolutos elevados de variación en el componente principal lo que puede indicar que el tipo de tejido puede tener cierta relación con la variabilidad de las muestras.
+
+```{r PCA ELI_vs_SFI, fig.width = 6, fig.height = 6, fig.align="center", fig.cap="Plot PCA para comparación ELI_vs_SFI"}
+plotPCA(vsd_ELI_vs_SFI, intgroup="Group")
+```
+
+En el caso de la comparación `ELI_vs_SFI` se observó que las muestras se encuentran bastante repartidas por todo el gráfico por lo que no se espera que el grupo sea una variable que defina la variabilidad de las muestras.
+
+```{r PCA NIT_vs_SFI, fig.width = 6, fig.height = 6, fig.align="center", fig.cap="Plot PCA para comparación NIT_vs_SFI"}
+plotPCA(vsd_NIT_vs_SFI, intgroup="Group")
+```
+
+Por último, en el caso de la comparación `NIT_vs_SFI` tampoco se observó un agrupamiento demasiado clara por grupos. Además la contribución a la variabilidad total del componente principal en esta comparación es mucho menor que en los otros casos (29% frente a 62% y 69%). Este resultado poco concluyente puede deberse al bajo número de muestras aleatorias utilizadas en el análisis.
+
+
+##Análisis de expresión diferencial
+
+En el caso del paquete `DESeq2`, todos los pasos del análisis de expresión diferencial estándar se encuentran resumidos dentro de la función `DESeq()`. Tras aplicar esta función a los objetos `DESeqDataSet` creados anteriormente se pueden obtener los resultados de este análisis mediante la función `results()` lo que permite continuar con el estudio. En este paso se generaron tres objetos de resultados (`res_ELI_vs_NIT`, `res_ELI_vs_SFI` y `res_NIT_vs_SFI`).
+Hay que mencionar que para realizar el análisis de expresión diferencial se utilizan los datos sin normalizar por lo que se utilizan los datos de tipo `dds`.
+
+```{r ADE DESeq}
+dds_ELI_vs_NIT <- DESeq(dds_ELI_vs_NIT)
+res_ELI_vs_NIT <- results(dds_ELI_vs_NIT)
+
+dds_ELI_vs_SFI <- DESeq(dds_ELI_vs_SFI)
+res_ELI_vs_SFI <- results(dds_ELI_vs_SFI)
+
+dds_NIT_vs_SFI <- DESeq(dds_NIT_vs_SFI)
+res_NIT_vs_SFI <- results(dds_NIT_vs_SFI)
+
+```
+
+
+```{r objetos ADE, echo=TRUE}
+dds_ELI_vs_NIT
+head(res_ELI_vs_NIT, 5)
+
+dds_ELI_vs_SFI
+head(res_ELI_vs_SFI,5)
+
+dds_NIT_vs_SFI
+head(res_NIT_vs_SFI,5)
+```
+
+En este punto es interesante asegurar que el contraste que queremos estudiar en cada objeto se encuentra bien definido. Se comprueba que las comparaciones son las correctas.
+
+```{r contrastes, echo=TRUE}
+resultsNames(dds_ELI_vs_NIT)
+resultsNames(dds_ELI_vs_SFI)
+resultsNames(dds_NIT_vs_SFI)
+```
+
+##Contracción del cambio de log fold
+
+La contracción del efecto del tamaño (*LFC estimates shrinkage*) es muy útil para la visualización de los genes. Para hacerlo, se utiliza la función `lfcShrink()` y el método *apeglm* descrito por Zhu *et al.* [-@Zhu]. Se generaron los objetos `resLFC_ELI_vs_NIT`, `resLFC_ELI_vs_SFI` y `resLFC_NIT_vs_SFI`.
+
+```{r contraccion libreria}
+library("apeglm")
+```
+
+```{r shrinkage}
+resLFC_ELI_vs_NIT <- lfcShrink(dds_ELI_vs_NIT,
+                               coef="Group_NIT_vs_ELI", type = "apeglm")
+resLFC_ELI_vs_SFI <- lfcShrink(dds_ELI_vs_SFI,
+                               coef="Group_SFI_vs_ELI", type = "apeglm")
+resLFC_NIT_vs_SFI <- lfcShrink(dds_NIT_vs_SFI,
+                               coef="Group_SFI_vs_NIT", type = "apeglm")
+```
+
+```{r objetos shrink, echo=TRUE}
+head(resLFC_ELI_vs_NIT, 5)
+head(resLFC_ELI_vs_SFI, 5)
+head(resLFC_NIT_vs_SFI, 5)
+```
+
+
+##Counts plot
+
+Una manera muy sencilla de examinar los contajes de cada gen es utilizar la función `plotCounts()` que utiliza objetos `DESeqDataSet` como argumentos. En este caso se representan los contajes del gen con el menor p-value para cada comparación.
+
+```{r counts plot ELI_vs_NIT, out.width="50%", fig.align="center", fig.cap="Counts plot para comparación ELI_vs_NIT"}
+plotCounts(dds_ELI_vs_NIT,
+           gene=which.min(res_ELI_vs_NIT$padj), intgroup="Group")
+```
+
+En el caso de la comparación `ELI_vs_NIT` se observó que las muestras del grupo *NIT* tienen un número mucho más elevado de conteo que las del grupo *ELI* lo que puede indicar una expresión diferencial entre grupos.
+
+```{r counts plot ELI_vs_SFI, out.width="50%", fig.align="center", fig.cap="Counts plot para comparación ELI_vs_SFI"}
+plotCounts(dds_ELI_vs_SFI,
+           gene=which.min(res_ELI_vs_SFI$padj), intgroup="Group")
+```
+
+En el caso de la comparación `ELI_vs_SFI` se observó que algunas muestras del grupo *SFI* tenían conteos elevados pero que la mayoria de las muestras tenían conteos muy bajos. 
+
+```{r counts plot NIT_vs_SFI, out.width="50%", fig.align="center", fig.cap="Counts plot para comparación NIT_vs_SFI"}
+plotCounts(dds_NIT_vs_SFI,
+           gene=which.min(res_NIT_vs_SFI$padj), intgroup="Group")
+```
+
+Por último, en el caso de la comparación `NIT_vs_SFI` se observó que las muestras del grupo *NIT* tenían un número de conteo más elevado que las muestras del grupo *SFI*.
+
+Tras observar los gráficos para las tres comparaciones se puede decir que los genes del grupo *NIT* tienen más contajes, esto es, están más expresados que los otros dos grupos. Si tenemos en cuenta que este grupo es el tipo de tejido sin infiltraciones, se puede decir que el aumento de infiltraciones en el tejido parece disminuir la expresión de los genes.
+
+
+##MA plot
+
+El gráfico MA [@Dudoit] muestra la distribución de los coeficiente estimados en el modelo en todos los genes. En el eje y (M) se representa la resta de los valores logarítmicos mientras que en eje x (A) se representa la media de los coeficientes.
+En este caso se generan 6 gráficos usando la función `plotMA()` ya que para cada comparación se comparan los valores de los resultados estándar (`res`) con los obtenidos tras la contracción (`resLFC`).
+
+```{r plotMA ELI_vs_NIT, out.width="50%", fig.align="center", fig.cap="Plot MA para comparación ELI_vs_NIT"}
+
+par(mfrow=c(2,1))
+
+plotMA(res_ELI_vs_NIT, ylim=c(-2.5,2.5), main="ELI_vs_NIT")
+plotMA(resLFC_ELI_vs_NIT, ylim=c(-2.5,2.5), main="ELI_vs_NIT shrinkage")
+
+```
+
+```{r plotMA ELI_vs_SFI, out.width="50%", fig.align="center", fig.cap="Plot MA para comparación ELI_vs_SFI"}
+
+par(mfrow=c(2,1))
+
+plotMA(res_ELI_vs_SFI, ylim=c(-2.5,2.5), main="ELI_vs_SFI")
+plotMA(resLFC_ELI_vs_SFI, ylim=c(-2.5,2.5), main="ELI_vs_SFI shrinkage")
+
+
+```
+
+```{r plotMA NIT_vs_SFI, out.width="50%", fig.align="center", fig.cap="Plot MA para comparación NIT_vs_SFI"}
+
+par(mfrow=c(2,1))
+
+plotMA(res_NIT_vs_SFI, ylim=c(-2.5,2.5), main="NIT_vs_SFI")
+plotMA(resLFC_NIT_vs_SFI, ylim=c(-2.5,2.5), main="NIT_vs_SFI shrinkage")
+
+```
+
+
+En todos los casos se observó que el efecto de la contracción es muy útil para ver los genes con mayor expresión que destacan del ruido.
+
+##Gene clustering
+
+Para evaluar el agrupamiento de la expresión de los genes, se generan heatmaps con agrupamiento para los genes con más variabilidad dentro de las muestras. En este caso se utilizarán los datos normalizados *vst* y se generará un gráfico por comparación.
+
+```{r gene clustering libreria}
+library("genefilter")
+```
+
+```{r gene clustering ELI_vs_NIT, fig.width = 6, fig.height = 6, fig.align="center"}
+topVarGenes_ELI_vs_NIT <- head(order(rowVars(assay(vsd_ELI_vs_NIT)),
+                                     decreasing = TRUE), 20)
+mat_ELI_vs_NIT  <- assay(vsd_ELI_vs_NIT)[topVarGenes_ELI_vs_NIT, ]
+mat_ELI_vs_NIT  <- mat_ELI_vs_NIT - rowMeans(mat_ELI_vs_NIT)
+Group <- colData(vsd_ELI_vs_NIT)[,"Group"]
+anno_ELI_vs_NIT <- as.data.frame(Group)
+rownames(anno_ELI_vs_NIT) <- colnames(mat_ELI_vs_NIT)
+pheatmap(mat_ELI_vs_NIT, annotation_col = anno_ELI_vs_NIT, main = "Agrupamiento de genes para ELI_vs_NIT")
+```
+
+En el gráfico para la comparación `ELI_vs_NIT` se observó bastante correlación entre el patrón de expresión y el grupo para los genes más expresados de la lista mientras que en los genes menos expresados de la lista este comportamiento parece que cambia.
+
+```{r gene clustering ELI_vs_SFI, fig.width = 6, fig.height = 6, fig.align="center"}
+topVarGenes_ELI_vs_SFI <- head(order(rowVars(assay(vsd_ELI_vs_SFI)),
+                                     decreasing = TRUE), 20)
+mat_ELI_vs_SFI  <- assay(vsd_ELI_vs_SFI)[topVarGenes_ELI_vs_SFI, ]
+mat_ELI_vs_SFI  <- mat_ELI_vs_SFI - rowMeans(mat_ELI_vs_SFI)
+Group <- colData(vsd_ELI_vs_SFI)[,"Group"]
+anno_ELI_vs_SFI <- as.data.frame(Group)
+rownames(anno_ELI_vs_SFI) <- colnames(mat_ELI_vs_SFI)
+pheatmap(mat_ELI_vs_SFI, annotation_col = anno_ELI_vs_SFI, main = "Agrupamiento de genes para ELI_vs_SFI")
+
+```
+
+En el gráfico para la comparación `ELI_vs_SFI` se observó una correlación algo menor que en la comparación anterior para los genes más expresados aunque se observó el mismo cambio en los genes menos expresados.
+
+```{r gene clustering NIT_vs_SFI, fig.width = 6, fig.height = 6, fig.align="center"}
+topVarGenes_NIT_vs_SFI <- head(order(rowVars(assay(vsd_NIT_vs_SFI)),
+                                     decreasing = TRUE), 20)
+mat_NIT_vs_SFI  <- assay(vsd_NIT_vs_SFI)[topVarGenes_NIT_vs_SFI, ]
+mat_NIT_vs_SFI  <- mat_NIT_vs_SFI - rowMeans(mat_NIT_vs_SFI)
+Group <- colData(vsd_NIT_vs_SFI)[,"Group"]
+anno_NIT_vs_SFI <- as.data.frame(Group)
+rownames(anno_NIT_vs_SFI) <- colnames(mat_NIT_vs_SFI)
+pheatmap(mat_NIT_vs_SFI, annotation_col = anno_NIT_vs_SFI, main = "Agrupamiento de genes para NIT_vs_SFI")
+```
+
+Por último, en el caso de la comparación `NIT_vs_SFI` es dificil sacar alguna conclusión del gráfico dado que hay poca variación en la expresión y no parece relacionda con el grupo.
+
+
+
+##Anotación
+
+La tabla de resultados obtenida anteriormente sólo contiene información sobre IDs de *Ensembl* pero el nombre de los genes suele ser más informativo. Para añadir esta información se utiliza, por ejemplo, las anotaciones de los paquetes `AnnotationDbi` y `org.Hs.eg.db`. Por supuesto se anotan las tres tablas de resultados obtenidas de las tres comparaciones.
+
+```{r anotacion librerias}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+```
+
+```{r anotacion ELI_vs_NIT}
+res_ELI_vs_NIT$symbol <- mapIds(org.Hs.eg.db,
+                     keys = row.names(res_ELI_vs_NIT),
+                     column = "SYMBOL",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+res_ELI_vs_NIT$entrez <- mapIds(org.Hs.eg.db,
+                     keys = row.names(res_ELI_vs_NIT),
+                     column = "ENTREZID",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+res_ord_ELI_vs_NIT <- res_ELI_vs_NIT[order(res_ELI_vs_NIT$pvalue),]
+head(res_ord_ELI_vs_NIT)
+```
+
+```{r anotacion ELI_vs_SFI}
+res_ELI_vs_SFI$symbol <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_SFI),
+                                column = "SYMBOL",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ELI_vs_SFI$entrez <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_SFI),
+                                column = "ENTREZID",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ord_ELI_vs_SFI <- res_ELI_vs_SFI[order(res_ELI_vs_SFI$pvalue),]
+head(res_ord_ELI_vs_SFI)
+```
+
+```{r anotacion NIT_vs_SFI}
+res_NIT_vs_SFI$symbol <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_NIT_vs_SFI),
+                                column = "SYMBOL",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_NIT_vs_SFI$entrez <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_NIT_vs_SFI),
+                                column = "ENTREZID",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ord_NIT_vs_SFI <- res_NIT_vs_SFI[order(res_NIT_vs_SFI$pvalue),]
+head(res_ord_NIT_vs_SFI)
+```
+
+
+
+##Resumen de resultados
+
+Con esto se podría dar por finalizado el estudio sobre los datos de RNA-seq pero es convieniente guardar los resultados generados durante el análisis. En este caso se guardarán los objetos `counts`, `targets`, `res` y `res_ord` para cada una de las comparaciones.
+
+```{r guardar ficheros csv, eval=FALSE}
+write.csv(counts_ELI_vs_NIT, file = "./results/counts_ELI_vs_NIT.csv")
+write.csv(counts_ELI_vs_SFI, file = "./results/counts_ELI_vs_SFI.csv")
+write.csv(counts_NIT_vs_SFI, file = "./results/counts_NIT_vs_SFI.csv")
+
+write.csv(targets_ELI_vs_NIT, file = "./results/targets_ELI_vs_NIT.csv")
+write.csv(targets_ELI_vs_SFI, file = "./results/targets_ELI_vs_SFI.csv")
+write.csv(targets_NIT_vs_SFI, file = "./results/targets_NIT_vs_SFI.csv")
+
+```
+
+```{r guardar ficheros df, eval=FALSE}
+
+write.csv(as.data.frame(res_ELI_vs_NIT), file = "./results/res_ELI_vs_NIT.csv")
+write.csv(as.data.frame(res_ELI_vs_SFI), file = "./results/res_ELI_vs_SFI.csv")
+write.csv(as.data.frame(res_NIT_vs_SFI), file = "./results/res_NIT_vs_SFI.csv")
+
+write.csv(as.data.frame(res_ord_ELI_vs_NIT), file = "./results/res_ord_ELI_vs_NIT.csv")
+write.csv(as.data.frame(res_ord_ELI_vs_SFI), file = "./results/res_ord_ELI_vs_SFI.csv")
+write.csv(as.data.frame(res_ord_NIT_vs_SFI), file = "./results/res_ord_NIT_vs_SFI.csv")
+
+
+```
+
+
+Estos ficheros de resultados se encuentran resumidos en el siguiente listado.
+
+
+```{r resumen de resultados}
+listOfFiles <- dir("./results/") 
+knitr::kable(
+  listOfFiles, booktabs = TRUE,
+  col.names="ListadoFicheros"
+)
+```
+
+
+
+
+#CONCLUSIÓN
+
+El principal resultado del análisis ha sido que no hay una relación clara entre el tipo de tejido y la expresión génica. Hay pequeños indicios que no descartan esta relación, sobre todo en el caso del grupo *NIT*, pero posiblemente el pequeño tamaño de la muestra aleatoria sobre la que se ha realizado el análisis ha imposibilitado obtener unas conclusiones más claras.
+
+\pagebreak
+
+#APÉNDICE
+
+En este apartado se muestra en código utilizado a lo largo de todo el informe.
+
+```{r apendice, echo=TRUE, eval=FALSE}
+
+#1. Preparación del entorno
+
+setwd("~/Desktop/Master UOC/Semestre 3/Asignaturas/
+      157-Analisis de datos omicos/PEC2/ADO_PEC2")
+workingDir <- getwd()
+dir.create("data")
+dir.create("results")
+dataDir <- file.path(workingDir, "data/")
+resultsDir <- file.path(workingDir, "results/")
+
+#2. Lectura de datos
+
+counts <- read.csv("./data/counts.csv", sep = ";", header = T)
+targets <- read.csv("./data/targets.csv", header = T)
+
+head(counts[,1:3],3)
+head(targets, 3)
+
+#3. Modificación de los objetos `counts` y `targets`
+
+names(counts)[1] <- "Ensembl"
+counts$Ensembl <- gsub("\\..*", "", counts$Ensembl, fixed = FALSE)
+
+head(counts$Ensembl)
+
+targets$Sample_Name <- gsub("-", ".", x = as.character(targets$Sample_Name))
+
+head(targets, 3)
+
+#4. Selección aleatoria de muestras
+
+targets_NIT <- targets[targets$Group=="NIT",]
+targets_ELI <- targets[targets$Group=="ELI",]
+targets_SFI <- targets[targets$Group=="SFI",]
+
+set.seed(2020)
+
+targets_ELI_rndm <- targets_ELI[sample(nrow(targets_ELI), 10),]
+targets_SFI_rndm <- targets_SFI[sample(nrow(targets_SFI), 10),]
+targets_NIT_rndm <- targets_NIT[sample(nrow(targets_NIT), 10),]
+
+targets_ELI_rndm
+targets_SFI_rndm
+targets_NIT_rndm
+
+targets_ELI_vs_NIT <- do.call(what = rbind,
+                              args =list(targets_ELI_rndm, targets_NIT_rndm))
+
+targets_ELI_vs_SFI <- do.call(what = rbind,
+                              args =list(targets_ELI_rndm, targets_SFI_rndm))
+
+targets_NIT_vs_SFI <- do.call(what = rbind,
+                              args =list(targets_NIT_rndm, targets_SFI_rndm))
+
+#5. Modificación del archivo `counts` según el muestreo
+
+counts_red_ELI_vs_NIT <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in%
+                                        targets_ELI_vs_NIT$Sample_Name])
+counts_ELI_vs_NIT <- counts_red_ELI_vs_NIT[,-1]
+rownames(counts_ELI_vs_NIT) <- counts_red_ELI_vs_NIT[,1]
+all(rownames(targets_ELI_vs_NIT$Sample_Name) == colnames(counts_ELI_vs_NIT))
+
+counts_red_ELI_vs_SFI <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in%
+                                        targets_ELI_vs_SFI$Sample_Name])
+counts_ELI_vs_SFI <- counts_red_ELI_vs_SFI[,-1]
+rownames(counts_ELI_vs_SFI) <- counts_red_ELI_vs_SFI[,1]
+all(rownames(targets_ELI_vs_SFI$Sample_Name) == colnames(counts_ELI_vs_SFI))
+
+counts_red_NIT_vs_SFI <- cbind(counts$Ensembl,
+                               counts[colnames(counts) %in%
+                                        targets_NIT_vs_SFI$Sample_Name])
+counts_NIT_vs_SFI <- counts_red_NIT_vs_SFI[,-1]
+rownames(counts_NIT_vs_SFI) <- counts_red_NIT_vs_SFI[,1]
+all(rownames(targets_NIT_vs_SFI$Sample_Name) == colnames(counts_NIT_vs_SFI))
+
+head(counts_ELI_vs_NIT[,1:3], 3)
+head(counts_ELI_vs_SFI[,1:3], 3)
+head(counts_NIT_vs_SFI[,1:3], 3)
+
+
+#6. Construcción de los objetos `DESeqDataSet` usando de datos sin normalizar
+
+library("DESeq2")
+
+dds_ELI_vs_NIT <- DESeqDataSetFromMatrix(countData = counts_ELI_vs_NIT,
+                                         colData = targets_ELI_vs_NIT,
+                                         design = ~ Group)
+dds_ELI_vs_SFI <- DESeqDataSetFromMatrix(countData = counts_ELI_vs_SFI,
+                                         colData = targets_ELI_vs_SFI,
+                                         design = ~ Group)
+dds_NIT_vs_SFI <- DESeqDataSetFromMatrix(countData = counts_NIT_vs_SFI,
+                                         colData = targets_NIT_vs_SFI,
+                                         design = ~ Group)
+
+dds_ELI_vs_NIT
+dds_ELI_vs_SFI
+dds_NIT_vs_SFI
+
+#7. Filtraje de los datos
+
+nrow(dds_ELI_vs_NIT)
+keep_ELI_vs_NIT <- rowSums(counts(dds_ELI_vs_NIT)) > 1
+dds_ELI_vs_NIT <- dds_ELI_vs_NIT[keep_ELI_vs_NIT,]
+nrow(dds_ELI_vs_NIT)
+
+nrow(dds_ELI_vs_SFI)
+keep_ELI_vs_SFI <- rowSums(counts(dds_ELI_vs_SFI)) > 1
+dds_ELI_vs_SFI <- dds_ELI_vs_SFI[keep_ELI_vs_SFI,]
+nrow(dds_ELI_vs_SFI)
+
+nrow(dds_NIT_vs_SFI)
+keep_NIT_vs_SFI <- rowSums(counts(dds_NIT_vs_SFI)) > 1
+dds_NIT_vs_SFI <- dds_NIT_vs_SFI[keep_NIT_vs_SFI,]
+nrow(dds_NIT_vs_SFI)
+
+#8. Estabilización de la varianza
+
+vsd_ELI_vs_NIT <- vst(dds_ELI_vs_NIT, blind = F)
+vsd_ELI_vs_SFI <- vst(dds_ELI_vs_SFI, blind = F)
+vsd_NIT_vs_SFI <- vst(dds_NIT_vs_SFI, blind = F)
+
+rld_ELI_vs_NIT <- rlog(dds_ELI_vs_NIT, blind = F)
+rld_ELI_vs_SFI <- rlog(dds_ELI_vs_SFI, blind = F)
+rld_NIT_vs_SFI <- rlog(dds_NIT_vs_SFI, blind = F)
+
+#9. Distancia entre las muestras
+
+sampleDists_ELI_vs_NIT <- dist(t(assay(vsd_ELI_vs_NIT)))
+sampleDists_ELI_vs_SFI <- dist(t(assay(vsd_ELI_vs_SFI)))
+sampleDists_NIT_vs_SFI <- dist(t(assay(vsd_NIT_vs_SFI)))
+
+library("pheatmap")
+library("RColorBrewer")
+
+sampleDistMatrix_ELI_vs_NIT <- as.matrix(sampleDists_ELI_vs_NIT)
+rownames(sampleDistMatrix_ELI_vs_NIT) <- vsd_ELI_vs_NIT$Group
+colnames(sampleDistMatrix_ELI_vs_NIT) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_ELI_vs_NIT,
+         clustering_distance_rows = sampleDists_ELI_vs_NIT,
+         clustering_distance_cols = sampleDists_ELI_vs_NIT,
+         col = colors)
+
+sampleDistMatrix_ELI_vs_SFI <- as.matrix(sampleDists_ELI_vs_SFI)
+rownames(sampleDistMatrix_ELI_vs_SFI) <- vsd_ELI_vs_SFI$Group
+colnames(sampleDistMatrix_ELI_vs_SFI) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_ELI_vs_SFI,
+         clustering_distance_rows = sampleDists_ELI_vs_SFI,
+         clustering_distance_cols = sampleDists_ELI_vs_SFI,
+         col = colors)
+
+sampleDistMatrix_NIT_vs_SFI <- as.matrix(sampleDists_NIT_vs_SFI)
+rownames(sampleDistMatrix_NIT_vs_SFI) <- vsd_NIT_vs_SFI$Group
+colnames(sampleDistMatrix_NIT_vs_SFI) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix_NIT_vs_SFI,
+         clustering_distance_rows = sampleDists_NIT_vs_SFI,
+         clustering_distance_cols = sampleDists_NIT_vs_SFI,
+         col = colors)
+
+#10. Análisis de componentes principales (PCA)
+
+plotPCA(vsd_ELI_vs_NIT, intgroup="Group")
+
+plotPCA(vsd_ELI_vs_SFI, intgroup="Group")
+
+plotPCA(vsd_NIT_vs_SFI, intgroup="Group")
+
+#11. Análisis de expresión diferencial
+
+dds_ELI_vs_NIT <- DESeq(dds_ELI_vs_NIT)
+res_ELI_vs_NIT <- results(dds_ELI_vs_NIT)
+
+dds_ELI_vs_SFI <- DESeq(dds_ELI_vs_SFI)
+res_ELI_vs_SFI <- results(dds_ELI_vs_SFI)
+
+dds_NIT_vs_SFI <- DESeq(dds_NIT_vs_SFI)
+res_NIT_vs_SFI <- results(dds_NIT_vs_SFI)
+
+dds_ELI_vs_NIT
+head(res_ELI_vs_NIT, 5)
+
+dds_ELI_vs_SFI
+head(res_ELI_vs_SFI,5)
+
+dds_NIT_vs_SFI
+head(res_NIT_vs_SFI,5)
+
+resultsNames(dds_ELI_vs_NIT)
+resultsNames(dds_ELI_vs_SFI)
+resultsNames(dds_NIT_vs_SFI)
+
+#12. Contracción del cambio de log fold
+
+library("apeglm")
+
+resLFC_ELI_vs_NIT <- lfcShrink(dds_ELI_vs_NIT,
+                               coef="Group_NIT_vs_ELI", type = "apeglm")
+resLFC_ELI_vs_SFI <- lfcShrink(dds_ELI_vs_SFI,
+                               coef="Group_SFI_vs_ELI", type = "apeglm")
+resLFC_NIT_vs_SFI <- lfcShrink(dds_NIT_vs_SFI,
+                               coef="Group_SFI_vs_NIT", type = "apeglm")
+
+head(resLFC_ELI_vs_NIT, 5)
+head(resLFC_ELI_vs_SFI, 5)
+head(resLFC_NIT_vs_SFI, 5)
+
+#13. Counts plot
+
+plotCounts(dds_ELI_vs_NIT,
+           gene=which.min(res_ELI_vs_NIT$padj), intgroup="Group")
+
+plotCounts(dds_ELI_vs_SFI,
+           gene=which.min(res_ELI_vs_SFI$padj), intgroup="Group")
+
+plotCounts(dds_NIT_vs_SFI,
+           gene=which.min(res_NIT_vs_SFI$padj), intgroup="Group")
+
+#14. MA plot
+
+par(mfrow=c(2,1))
+
+plotMA(res_ELI_vs_NIT, ylim=c(-2.5,2.5), main="ELI_vs_NIT")
+plotMA(resLFC_ELI_vs_NIT, ylim=c(-2.5,2.5), main="ELI_vs_NIT shrinkage")
+
+par(mfrow=c(2,1))
+
+plotMA(res_ELI_vs_SFI, ylim=c(-2.5,2.5), main="ELI_vs_SFI")
+plotMA(resLFC_ELI_vs_SFI, ylim=c(-2.5,2.5), main="ELI_vs_SFI shrinkage")
+
+par(mfrow=c(2,1))
+
+plotMA(res_NIT_vs_SFI, ylim=c(-2.5,2.5), main="NIT_vs_SFI")
+plotMA(resLFC_NIT_vs_SFI, ylim=c(-2.5,2.5), main="NIT_vs_SFI shrinkage")
+
+#15. Gene clustering
+
+library("genefilter")
+
+topVarGenes_ELI_vs_NIT <- head(order(rowVars(assay(vsd_ELI_vs_NIT)),
+                                     decreasing = TRUE), 20)
+mat_ELI_vs_NIT  <- assay(vsd_ELI_vs_NIT)[topVarGenes_ELI_vs_NIT, ]
+mat_ELI_vs_NIT  <- mat_ELI_vs_NIT - rowMeans(mat_ELI_vs_NIT)
+Group <- colData(vsd_ELI_vs_NIT)[,"Group"]
+anno_ELI_vs_NIT <- as.data.frame(Group)
+rownames(anno_ELI_vs_NIT) <- colnames(mat_ELI_vs_NIT)
+pheatmap(mat_ELI_vs_NIT, annotation_col = anno_ELI_vs_NIT,
+         main = "Agrupamiento de genes para ELI_vs_NIT")
+
+topVarGenes_ELI_vs_SFI <- head(order(rowVars(assay(vsd_ELI_vs_SFI)),
+                                     decreasing = TRUE), 20)
+mat_ELI_vs_SFI  <- assay(vsd_ELI_vs_SFI)[topVarGenes_ELI_vs_SFI, ]
+mat_ELI_vs_SFI  <- mat_ELI_vs_SFI - rowMeans(mat_ELI_vs_SFI)
+Group <- colData(vsd_ELI_vs_SFI)[,"Group"]
+anno_ELI_vs_SFI <- as.data.frame(Group)
+rownames(anno_ELI_vs_SFI) <- colnames(mat_ELI_vs_SFI)
+pheatmap(mat_ELI_vs_SFI, annotation_col = anno_ELI_vs_SFI,
+         main = "Agrupamiento de genes para ELI_vs_SFI")
+
+topVarGenes_NIT_vs_SFI <- head(order(rowVars(assay(vsd_NIT_vs_SFI)),
+                                     decreasing = TRUE), 20)
+mat_NIT_vs_SFI  <- assay(vsd_NIT_vs_SFI)[topVarGenes_NIT_vs_SFI, ]
+mat_NIT_vs_SFI  <- mat_NIT_vs_SFI - rowMeans(mat_NIT_vs_SFI)
+Group <- colData(vsd_NIT_vs_SFI)[,"Group"]
+anno_NIT_vs_SFI <- as.data.frame(Group)
+rownames(anno_NIT_vs_SFI) <- colnames(mat_NIT_vs_SFI)
+pheatmap(mat_NIT_vs_SFI, annotation_col = anno_NIT_vs_SFI,
+         main = "Agrupamiento de genes para NIT_vs_SFI")
+
+#16. Anotación
+
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+res_ELI_vs_NIT$symbol <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_NIT),
+                                column = "SYMBOL",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ELI_vs_NIT$entrez <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_NIT),
+                                column = "ENTREZID",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ord_ELI_vs_NIT <- res_ELI_vs_NIT[order(res_ELI_vs_NIT$pvalue),]
+head(res_ord_ELI_vs_NIT)
+
+res_ELI_vs_SFI$symbol <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_SFI),
+                                column = "SYMBOL",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ELI_vs_SFI$entrez <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_ELI_vs_SFI),
+                                column = "ENTREZID",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ord_ELI_vs_SFI <- res_ELI_vs_SFI[order(res_ELI_vs_SFI$pvalue),]
+head(res_ord_ELI_vs_SFI)
+
+res_NIT_vs_SFI$symbol <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_NIT_vs_SFI),
+                                column = "SYMBOL",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_NIT_vs_SFI$entrez <- mapIds(org.Hs.eg.db,
+                                keys = row.names(res_NIT_vs_SFI),
+                                column = "ENTREZID",
+                                keytype = "ENSEMBL",
+                                multiVals = "first")
+res_ord_NIT_vs_SFI <- res_NIT_vs_SFI[order(res_NIT_vs_SFI$pvalue),]
+head(res_ord_NIT_vs_SFI)
+
+#17. Resumen de resultados
+
+write.csv(counts_ELI_vs_NIT, file = "./results/counts_ELI_vs_NIT.csv")
+write.csv(counts_ELI_vs_SFI, file = "./results/counts_ELI_vs_SFI.csv")
+write.csv(counts_NIT_vs_SFI, file = "./results/counts_NIT_vs_SFI.csv")
+
+write.csv(targets_ELI_vs_NIT, file = "./results/targets_ELI_vs_NIT.csv")
+write.csv(targets_ELI_vs_SFI, file = "./results/targets_ELI_vs_SFI.csv")
+write.csv(targets_NIT_vs_SFI, file = "./results/targets_NIT_vs_SFI.csv")
+
+write.csv(as.data.frame(res_ELI_vs_NIT), file = "./results/res_ELI_vs_NIT.csv")
+write.csv(as.data.frame(res_ELI_vs_SFI), file = "./results/res_ELI_vs_SFI.csv")
+write.csv(as.data.frame(res_NIT_vs_SFI), file = "./results/res_NIT_vs_SFI.csv")
+
+write.csv(as.data.frame(res_ord_ELI_vs_NIT), file = "./results/res_ord_ELI_vs_NIT.csv")
+write.csv(as.data.frame(res_ord_ELI_vs_SFI), file = "./results/res_ord_ELI_vs_SFI.csv")
+write.csv(as.data.frame(res_ord_NIT_vs_SFI), file = "./results/res_ord_NIT_vs_SFI.csv")
+
+listOfFiles <- dir("./results/") 
+knitr::kable(
+  listOfFiles, booktabs = TRUE,
+  col.names="ListadoFicheros"
+)
+
+```
+
+
+#REFERENCIAS
+
+
